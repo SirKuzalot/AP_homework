@@ -1,184 +1,319 @@
-import numpy as np
-import matplotlib.pyplot as plt
+#!/usr/bin/env python
+
+# Deep Learning Homework 1
+
 import argparse
 
+import numpy as np
+import matplotlib.pyplot as plt
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Train models for Intel Landscape Classification")
-    parser.add_argument('model', choices=['perceptron', 'logistic_regression'],
-                        help="Model to train: perceptron or logistic_regression")
-    parser.add_argument('-epochs', type=int, default=10,
-                        help="Number of epochs for training")
-    parser.add_argument('-l2_penalty', type=float, default=0.0,
-                    help="Strength of L2 regularization (default: 0.0)")
-    return parser.parse_args()
+import time
+import utils
 
-class Perceptron:
-    def __init__(self, num_classes, input_dim, eta=1):
-        self.W = np.zeros((num_classes, input_dim)) 
-        self.eta = eta
 
-    def update_weights(self, X, y):
-        mistakes = 0
-        for x, label in zip(X, y):
-            y_hat = np.argmax(self.W.dot(x))
-            if y_hat != label:
-                mistakes += 1
-                self.W[label, :] += self.eta * x
-                self.W[y_hat, :] -= self.eta * x
-        return mistakes
+class LinearModel(object):
+    def __init__(self, n_classes, n_features, **kwargs):
+        self.W = np.zeros((n_classes, n_features))
+
+    def update_weight(self, x_i, y_i, **kwargs):
+        raise NotImplementedError
+
+    def train_epoch(self, X, y, **kwargs):
+        for x_i, y_i in zip(X, y):
+            self.update_weight(x_i, y_i, **kwargs)
 
     def predict(self, X):
-        return np.argmax(self.W.dot(X.T), axis=0)
+        """X (n_examples x n_features)"""
+        scores = np.dot(self.W, X.T)  # (n_classes x n_examples)
+        predicted_labels = scores.argmax(axis=0)  # (n_examples)
+        return predicted_labels
 
     def evaluate(self, X, y):
-        predictions = self.predict(X)
-        accuracy = np.mean(predictions == y)
-        return accuracy
-    
-def train_perceptron(X_train, y_train, X_val, y_val, X_test, y_test, epochs=100):
-    num_classes = 6
-    input_dim = X_train.shape[1]
-    perceptron = Perceptron(num_classes, input_dim)
+        """
+        X (n_examples x n_features)
+        y (n_examples): gold labels
+        """
+        y_hat = self.predict(X)
+        n_correct = (y == y_hat).sum()
+        n_possible = y.shape[0]
+        return n_correct / n_possible
 
-    train_accuracies = []
-    val_accuracies = []
 
-    for epoch in range(epochs):
-        mistakes = perceptron.update_weights(X_train, y_train)
-        train_acc = perceptron.evaluate(X_train, y_train)
-        val_acc = perceptron.evaluate(X_val, y_val)
+class Perceptron(LinearModel):
+    def update_weight(self, x_i, y_i, learning_rate=0.001,**kwargs):
+        """
+        x_i (n_features): a single training example
+        y_i (scalar): the gold label for that example
+        other arguments are ignored
+        """
+        y_hat = np.argmax(self.W.dot(x_i))
+        if y_hat != y_i:
+            self.W[y_i, :] += learning_rate * x_i
+            self.W[y_hat, :] -= learning_rate * x_i
 
-        train_accuracies.append(train_acc)
-        val_accuracies.append(val_acc)
 
-        print(f"Epoch {epoch + 1}/{epochs}: Mistakes: {mistakes}, "
-              f"Train Accuracy: {train_acc:.4f}, Validation Accuracy: {val_acc:.4f}")
+        #raise NotImplementedError # Q1.1 (a)
 
-    test_acc = perceptron.evaluate(X_test, y_test)
-    print(f"Final Test Accuracy: {test_acc:.4f}")
 
-    return train_accuracies, val_accuracies
-class LogisticRegression:
-    def __init__(self, num_classes, input_dim, eta=0.001, l2_penalty=0.0):
-        self.W = np.zeros((num_classes, input_dim))  # Weight matrix
-        self.eta = eta
-        self.l2_penalty = l2_penalty  # L2 regularization strength
-
-    def sigmoid(self, z):
-        return 1 / (1 + np.exp(-z))
+class LogisticRegression(LinearModel):
 
     def softmax(self, z):
         exps = np.exp(z - np.max(z))  # Stability improvement
         return exps / np.sum(exps)
+    
+    def update_weight(self, x_i, y_i, learning_rate=0.001, l2_penalty=0.0, **kwargs):
+        """
+        x_i (n_features): a single training example
+        y_i: the gold label for that example
+        learning_rate (float): keep it at the default value for your plots
+        """
 
-    def update_weights(self, X, y):
-        mistakes = 0
-        for x, label in zip(X, y):
-            scores = self.W.dot(x)  # Linear scores for each class
-            probs = self.softmax(scores)  # Softmax for multi-class probabilities
-            y_hat = np.argmax(probs)
-            if y_hat != label:
-                mistakes += 1
-
-            # Gradient calculation
-            gradient = probs
-            gradient[label] -= 1  # One-hot encoding difference
-            
-            # Update weights with L2 regularization
-            self.W -= self.eta * (np.outer(gradient, x) + self.l2_penalty * self.W)
+        # Compute the linear scores
+        scores = self.W.dot(x_i)  # Shape: (n_classes,)
         
-        return mistakes
+        # Compute probabilities using softmax
+        probs = self.softmax(scores)  # Shape: (n_classes,)
+        
+        # Create one-hot encoding for the true label
+        y_one_hot = np.zeros_like(probs)
+        y_one_hot[y_i] = 1
+        
+        # Compute gradient of the cross-entropy loss
+        gradient = np.outer(probs - y_one_hot, x_i)  # Shape: (n_classes, n_features)
+        
+        # Update the weights
+        self.W -= learning_rate * (gradient + l2_penalty * self.W)
 
+
+        #raise NotImplementedError # Q1.2 (a,b)
+
+
+class MLP(object):
+    def __init__(self, n_classes, n_features, hidden_size):
+        """
+        Initialize an MLP with a single hidden layer.
+        
+        Args:
+            n_classes (int): Number of output classes.
+            n_features (int): Number of input features.
+            hidden_size (int): Number of hidden units.
+        """
+        # Initialize weights and biases
+        self.W1 = np.random.normal(0.1, 0.1, (hidden_size, n_features))
+        self.b1 = np.zeros((hidden_size,))
+        self.W2 = np.random.normal(0.1, 0.1, (n_classes, hidden_size))
+        self.b2 = np.zeros((n_classes,))
+
+    def relu(self, x):
+        return np.maximum(0, x)
+
+    def relu_derivative(self, x):
+        return (x > 0).astype(float)
+
+    def softmax(self, x):
+        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+
+    def cross_entropy_loss(self, y_true, y_pred):
+        n_samples = y_true.shape[0]
+        log_likelihood = -np.log(y_pred[range(n_samples), y_true] + 1*(10**-6) )
+        return np.sum(log_likelihood) / n_samples
+    
     def predict(self, X):
-        scores = self.W.dot(X.T)
-        return np.argmax(scores, axis=0)
+        """Compute the forward pass for prediction."""
+        hidden = self.relu(np.dot(X, self.W1.T) + self.b1)
+        output = self.softmax(np.dot(hidden, self.W2.T) + self.b2)
+        return np.argmax(output, axis=1)
 
     def evaluate(self, X, y):
-        predictions = self.predict(X)
-        accuracy = np.mean(predictions == y)
-        return accuracy
+        """
+        X (n_examples x n_features)
+        y (n_examples): gold labels
+        """
+        # Identical to LinearModel.evaluate()
+        y_hat = self.predict(X)
+        n_correct = (y == y_hat).sum()
+        n_possible = y.shape[0]
+        return n_correct / n_possible
 
 
-def train_logistic_regression(X_train, y_train, X_val, y_val, X_test, y_test, epochs=100, eta=0.001, l2_penalty=0.0):
-    num_classes = 6
-    input_dim = X_train.shape[1]
-    model = LogisticRegression(num_classes, input_dim, eta, l2_penalty)
+    def train_epoch(self, X, y, learning_rate=0.001):
+        """
+        Train the model for one epoch using stochastic gradient descent.
 
-    train_accuracies = []
-    val_accuracies = []
-    weight_norms = []  # Store Frobenius norms
+        Args:
+            X (ndarray): Input data of shape (n_samples, n_features).
+            y (ndarray): True labels of shape (n_samples,).
+            learning_rate (float): Learning rate for gradient descent.
 
-    for epoch in range(epochs):
-        mistakes = model.update_weights(X_train, y_train)
-        train_acc = model.evaluate(X_train, y_train)
-        val_acc = model.evaluate(X_val, y_val)
+        Returns:
+            float: The loss for the epoch.
+        """
+        n_samples = X.shape[0]
+        loss = 0
 
-        # Compute and store the Frobenius norm of weights
-        frobenius_norm = np.sqrt(np.sum(np.square(model.W)))
-        weight_norms.append(frobenius_norm)
+        for i in range(n_samples):
+            # Forward pass
+            xi = X[i:i+1]  # Single sample
+            yi = y[i]
+            
+            hidden = self.relu(np.dot(xi, self.W1.T) + self.b1)
+            output = self.softmax(np.dot(hidden, self.W2.T) + self.b2)
+            
+            # Compute loss using the defined loss function
+            loss += self.cross_entropy_loss(np.array([yi]), output)
 
-        train_accuracies.append(train_acc)
-        val_accuracies.append(val_acc)
+            # Backward pass
+            grad_output = output
+            grad_output[0, yi] -= 1
 
-        print(f"Epoch {epoch + 1}/{epochs}: Mistakes: {mistakes}, "
-              f"Train Accuracy: {train_acc:.4f}, Validation Accuracy: {val_acc:.4f}, "
-              f"Weights Norm: {frobenius_norm:.4f}")
+            grad_W2 = np.dot(grad_output.T, hidden)
+            grad_b2 = grad_output.flatten()
+            
+            grad_hidden = np.dot(grad_output, self.W2) * self.relu_derivative(hidden)
+            grad_W1 = np.dot(grad_hidden.T, xi)
+            grad_b1 = grad_hidden.flatten()
 
-    test_acc = model.evaluate(X_test, y_test)
-    print(f"Final Test Accuracy: {test_acc:.4f}")
+            # Update weights and biases
+            self.W2 -= learning_rate * grad_W2
+            self.b2 -= learning_rate * grad_b2
+            self.W1 -= learning_rate * grad_W1
+            self.b1 -= learning_rate * grad_b1
 
-    return train_accuracies, val_accuracies, weight_norms
+        return loss / n_samples
 
 
-
-
-def plot_accuracies(train_accuracies, val_accuracies):
-    plt.plot(train_accuracies, label='Train Accuracy')
-    plt.plot(val_accuracies, label='Validation Accuracy')
-    plt.xlabel('Epochs')
+def plot(epochs, train_accs, val_accs, filename=None):
+    plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
+    plt.plot(epochs, train_accs, label='train')
+    plt.plot(epochs, val_accs, label='validation')
     plt.legend()
-    plt.title('Perceptron Performance')
-    plt.savefig('plot.png')
-    
-def plot_weight_norms(weight_norms_non_regularized, weight_norms_regularized):
-    plt.plot(weight_norms_non_regularized, label='Non-Regularized')
-    plt.plot(weight_norms_regularized, label='Regularized')
-    plt.xlabel('Epochs')
-    plt.ylabel('Frobenius Norm of Weights')
+    if filename:
+        plt.savefig(filename, bbox_inches='tight')
+    plt.show()
+
+def plot_loss(epochs, loss, filename=None):
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.plot(epochs, loss, label='train')
     plt.legend()
-    plt.title('Impact of Regularization on Weight Norms')
-    plt.savefig('weight_norms.png')
-    
-    
-if __name__ == "__main__":
-    args = parse_arguments()
-    
-    # Load dataset
-    data = np.load('intel_landscapes.v2.npz')
-    X_train, y_train = data['train_images'], data['train_labels']
-    X_val, y_val = data['val_images'], data['val_labels']
-    X_test, y_test = data['test_images'], data['test_labels']
-    
-    # Flatten images for linear classifiers
-    X_train = X_train.reshape(X_train.shape[0], -1) / 255.0
-    X_val = X_val.reshape(X_val.shape[0], -1) / 255.0
-    X_test = X_test.reshape(X_test.shape[0], -1) / 255.0
+    if filename:
+        plt.savefig(filename, bbox_inches='tight')
+    plt.show()
 
-    if args.model == 'perceptron':
-        print(f"Training Perceptron for {args.epochs} epochs...")
-        train_accuracies, val_accuracies = train_perceptron(
-            X_train, y_train, X_val, y_val, X_test, y_test, args.epochs
-        )
-        plot_accuracies(train_accuracies, val_accuracies)
+
+def plot_w_norm(epochs, w_norms, filename=None):
+    plt.xlabel('Epoch')
+    plt.ylabel('W Norm')
+    plt.plot(epochs, w_norms, label='train')
+    plt.legend()
+    if filename:
+        plt.savefig(filename, bbox_inches='tight')
+    plt.show()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('model',
+                        choices=['perceptron', 'logistic_regression', 'mlp'],
+                        help="Which model should the script run?")
+    parser.add_argument('-epochs', default=20, type=int,
+                        help="""Number of epochs to train for. You should not
+                        need to change this value for your plots.""")
+    parser.add_argument('-hidden_size', type=int, default=100,
+                        help="""Number of units in hidden layers (needed only
+                        for MLP, not perceptron or logistic regression)""")
+    parser.add_argument('-learning_rate', type=float, default=0.001,
+                        help="""Learning rate for parameter updates (needed for
+                        logistic regression and MLP, but not perceptron)""")
+    parser.add_argument('-l2_penalty', type=float, default=0.0,)
+    parser.add_argument('-data_path', type=str, default='intel_landscapes.npz',)
+    opt = parser.parse_args()
+
+    utils.configure_seed(seed=42)
+
+    add_bias = opt.model != "mlp"
+    data = utils.load_dataset(data_path=opt.data_path, bias=add_bias)
+    train_X, train_y = data["train"]
+    dev_X, dev_y = data["dev"]
+    test_X, test_y = data["test"]
+    n_classes = np.unique(train_y).size
+    n_feats = train_X.shape[1]
+
+    # initialize the model
+    if opt.model == 'perceptron':
+        model = Perceptron(n_classes, n_feats)
+    elif opt.model == 'logistic_regression':
+        model = LogisticRegression(n_classes, n_feats)
+    else:
+        model = MLP(n_classes, n_feats, opt.hidden_size)
+    epochs = np.arange(1, opt.epochs + 1)
+    train_loss = []
+    weight_norms = []
+    valid_accs = []
+    train_accs = []
+
+    start = time.time()
+
+    print('initial train acc: {:.4f} | initial val acc: {:.4f}'.format(
+        model.evaluate(train_X, train_y), model.evaluate(dev_X, dev_y)
+    ))
     
-    elif args.model == 'logistic_regression':
-        train_accuracies, val_accuracies, weight_norms = train_logistic_regression(
-            X_train, y_train, X_val, y_val, X_test, y_test, args.epochs, l2_penalty=args.l2_penalty
-        )
+    for i in epochs:
+        print('Training epoch {}'.format(i))
+        train_order = np.random.permutation(train_X.shape[0])
+        train_X = train_X[train_order]
+        train_y = train_y[train_order]
+        if opt.model == 'mlp':
+            loss = model.train_epoch(
+                train_X,
+                train_y,
+                learning_rate=opt.learning_rate
+            )
+        else:
+            model.train_epoch(
+                train_X,
+                train_y,
+                learning_rate=opt.learning_rate,
+                l2_penalty=opt.l2_penalty,
+            )
+        
+        train_accs.append(model.evaluate(train_X, train_y))
+        valid_accs.append(model.evaluate(dev_X, dev_y))
+        if opt.model == 'mlp':
+            print('loss: {:.4f} | train acc: {:.4f} | val acc: {:.4f}'.format(
+                loss, train_accs[-1], valid_accs[-1],
+            ))
+            train_loss.append(loss)
+        elif opt.model == "logistic_regression":
+            weight_norm = np.linalg.norm(model.W)
+            print('train acc: {:.4f} | val acc: {:.4f} | W norm: {:.4f}'.format(
+                 train_accs[-1], valid_accs[-1], weight_norm,
+            ))
+            weight_norms.append(weight_norm)
+        else:
+            print('train acc: {:.4f} | val acc: {:.4f}'.format(
+                 train_accs[-1], valid_accs[-1],
+            ))
+    elapsed_time = time.time() - start
+    minutes = int(elapsed_time // 60)
+    seconds = int(elapsed_time % 60)
+    print('Training took {} minutes and {} seconds'.format(minutes, seconds))
+    print('Final test acc: {:.4f}'.format(
+        model.evaluate(test_X, test_y)
+        ))
 
-        plot_accuracies(train_accuracies, val_accuracies)
+    # plot
+    plot(epochs, train_accs, valid_accs, filename=f"Q1-{opt.model}-accs.pdf")
+    if opt.model == 'mlp':
+        plot_loss(epochs, train_loss, filename=f"Q1-{opt.model}-loss.pdf")
+    elif opt.model == 'logistic_regression':
+        plot_w_norm(epochs, weight_norms, filename=f"Q1-{opt.model}-w_norms.pdf")
+    with open(f"Q1-{opt.model}-results.txt", "w") as f:
+        f.write(f"Final test acc: {model.evaluate(test_X, test_y)}\n")
+        f.write(f"Training time: {minutes} minutes and {seconds} seconds\n")
 
-# Fica a faltar a ultima parte. Ainda n revi, faço isso amanha. Podes rever se quiseres ou podes so tentar o 2
 
+if __name__ == '__main__':
+    main()
