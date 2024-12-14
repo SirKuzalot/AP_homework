@@ -47,7 +47,7 @@ class LogisticRegression(nn.Module):
         backward pass.
         """
 
-        y_hat = torch.sigmoid(self.linear(x))
+        y_hat = self.linear(x)
         return y_hat
         #raise NotImplementedError
 
@@ -70,6 +70,20 @@ class FeedforwardNetwork(nn.Module):
         """
         super().__init__()
         # Implement me!
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(n_features, hidden_size))
+        
+        for _ in range(layers - 1):
+            self.layers.append(nn.Linear(hidden_size, hidden_size))
+        
+        self.layers.append(nn.Linear(hidden_size, n_classes))
+        
+        if activation_type == 'relu':
+            self.activation = nn.ReLU()
+        elif activation_type == 'tanh':
+            self.activation = nn.Tanh()
+        
+        self.dropout = nn.Dropout(dropout)
         #raise NotImplementedError
 
         
@@ -82,7 +96,13 @@ class FeedforwardNetwork(nn.Module):
         the output logits from x. This will include using various hidden
         layers, pointwise nonlinear functions, and dropout.
         """
-        raise NotImplementedError
+        for layer in self.layers[:-1]:
+            x = self.activation(layer(x))
+            x = self.dropout(x)
+        x = self.layers[-1](x)
+        return x
+
+        #raise NotImplementedError
 
 
 def train_batch(X, y, model, optimizer, criterion, **kwargs):
