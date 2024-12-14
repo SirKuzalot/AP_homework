@@ -111,8 +111,15 @@ class MLP(object):
         return (x > 0).astype(float)
 
     def softmax(self, x):
-        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
-        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+        if x.ndim == 1:  # Handle 1D input
+            exp_x = np.exp(x - np.max(x))  # Subtract max for numerical stability
+            return exp_x / np.sum(exp_x)
+        elif x.ndim == 2:  # Handle 2D input
+            exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+            return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+        else:
+            raise ValueError("Input to softmax must be 1D or 2D.")
+
 
     def cross_entropy_loss(self, y_true, y_pred):
         n_samples = y_true.shape[0]
@@ -147,40 +154,99 @@ class MLP(object):
             learning_rate (float): Learning rate for gradient descent.
 
         Returns:
-            float: The loss for the epoch.
+            float: The average loss for the epoch.
         """
         n_samples = X.shape[0]
-        loss = 0
+        total_loss = 0
 
         for i in range(n_samples):
-            # Forward pass
-            xi = X[i:i+1]  # Single sample
-            yi = y[i]
-            
-            hidden = self.relu(np.dot(xi, self.W1.T) + self.b1)
-            output = self.softmax(np.dot(hidden, self.W2.T) + self.b2)
-            
-            # Compute loss using the defined loss function
-            loss += self.cross_entropy_loss(np.array([yi]), output)
+            # Extract a single sample and its label
+            xi = X[i]  # Shape: (n_features,)
+            yi = y[i]  # True class index
 
-            # Backward pass
-            grad_output = output
-            grad_output[0, yi] -= 1
+            ### FORWARD PASS ###
+            # First layer: Input to hidden
+            z1 = self.W1.dot(xi) + self.b1  # Pre-activation: Shape (hidden_size,)
+            h1 = self.relu(z1)                  # Activation (ReLU): Shape (hidden_size,)
 
-            grad_W2 = np.dot(grad_output.T, hidden)
-            grad_b2 = grad_output.flatten()
-            
-            grad_hidden = np.dot(grad_output, self.W2) * self.relu_derivative(hidden)
-            grad_W1 = np.dot(grad_hidden.T, xi)
-            grad_b1 = grad_hidden.flatten()
+            # Second layer: Hidden to output
+            z2 = self.W2.dot(h1) + self.b2  # Pre-activation: Shape (n_classes,)
+            y_pred = self.softmax(z2)           # Output probabilities: Shape (n_classes,)
 
-            # Update weights and biases
-            self.W2 -= learning_rate * grad_W2
-            self.b2 -= learning_rate * grad_b2
-            self.W1 -= learning_rate * grad_W1
-            self.b1 -= learning_rate * grad_b1
+            # Compute cross-entropy loss for this sample
+            loss = -np.log(y_pred[yi] + 10**-6)
+            total_loss += loss
 
-        return loss / n_samples
+            ### BACKWARD PASS ###
+            # Gradients for the output layer
+            z2_grad = y_pred  # Gradient of loss w.r.t. softmax inputs
+            z2_grad[yi] -= 1  # Adjust for the true class index
+
+            w2_grad = z2_grad[:, None].dot(h1[:, None].T)  # Weight gradients (outer product)
+            b2_grad = z2_grad                # Bias gradients
+
+            # Gradients for the hidden layer
+            h1_grad = self.W2.T.dot(z2_grad)  # Backpropagated gradient to hidden
+            z1_grad = h1_grad * self.relu_derivative(z1)  # Apply ReLU derivative
+
+            w1_grad = z1_grad[:, None].dot(xi[:, None].T)  # Weight gradients (outer product)
+            b1_grad = z1_grad                # Bias gradients
+
+            ### UPDATE PARAMETERS ###
+            self.W2 -= learning_rate * w2_grad
+            self.b2 -= learning_rate * b2_grad
+            self.W1 -= learning_rate * w1_grad
+            self.b1 -= learning_rate * b1_grad
+
+        # Return the average loss over all samples
+        return total_loss / n_samples
+    
+'''
+initial train acc: 0.1694 | initial val acc: 0.1880
+Training epoch 1
+loss: 4.0943 | train acc: 0.3845 | val acc: 0.3604
+Training epoch 2
+loss: 1.6373 | train acc: 0.4567 | val acc: 0.4352
+Training epoch 3
+loss: 1.4623 | train acc: 0.4808 | val acc: 0.4551
+Training epoch 4
+loss: 1.3732 | train acc: 0.4743 | val acc: 0.4366
+Training epoch 5
+loss: 1.3285 | train acc: 0.4667 | val acc: 0.4309
+Training epoch 6
+loss: 1.3021 | train acc: 0.5260 | val acc: 0.4822
+Training epoch 7
+loss: 1.2796 | train acc: 0.5226 | val acc: 0.4793
+Training epoch 8
+loss: 1.2653 | train acc: 0.4929 | val acc: 0.4615
+Training epoch 9
+loss: 1.2566 | train acc: 0.5257 | val acc: 0.4793
+Training epoch 10
+loss: 1.2445 | train acc: 0.5421 | val acc: 0.5014
+Training epoch 11
+loss: 1.2341 | train acc: 0.5264 | val acc: 0.4900
+Training epoch 12
+loss: 1.2175 | train acc: 0.4849 | val acc: 0.4402
+Training epoch 13
+loss: 1.2065 | train acc: 0.5184 | val acc: 0.4729
+Training epoch 14
+loss: 1.1984 | train acc: 0.5410 | val acc: 0.4815
+Training epoch 15
+loss: 1.1909 | train acc: 0.5544 | val acc: 0.5100
+Training epoch 16
+loss: 1.1867 | train acc: 0.5523 | val acc: 0.4865
+Training epoch 17
+loss: 1.1811 | train acc: 0.5668 | val acc: 0.5107
+Training epoch 18
+loss: 1.1722 | train acc: 0.5648 | val acc: 0.5050
+Training epoch 19
+loss: 1.1641 | train acc: 0.5690 | val acc: 0.5043
+Training epoch 20
+loss: 1.1493 | train acc: 0.5835 | val acc: 0.5256
+Training took 23 minutes and 8 seconds
+Final test acc: 0.5307
+'''
+
 
 
 def plot(epochs, train_accs, val_accs, filename=None):
