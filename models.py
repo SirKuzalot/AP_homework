@@ -21,8 +21,11 @@ class BahdanauAttention(nn.Module):
     def __init__(self, hidden_size):
         super(BahdanauAttention, self).__init__()
         
-        raise NotImplementedError("Add your implementation.")
-
+        self.v = nn.Linear(hidden_size, 1, bias=False)
+        self.Ws = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.Wh = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.Wout = nn.Linear(hidden_size*2, hidden_size, bias=False)
+        
     def forward(self, query, encoder_outputs, src_lengths):
         """
         query:          (batch_size, max_tgt_len, hidden_size)
@@ -32,6 +35,21 @@ class BahdanauAttention(nn.Module):
             attn_out:   (batch_size, max_tgt_len, hidden_size) - attended vector
         """
 
+        allign_scores = self.v(torch.tanh(self.Ws(query) + self.Wh(encoder_outputs)))
+        allign_scores = allign_scores.squeeze(-1)
+        allign_scores.masked_fill(~self.sequence_mask(src_lengths).to(allign_scores.device), float('-inf'))
+
+
+        attn_weights = torch.softmax(allign_scores, dim=-1)
+        
+        attn_weights = attn_weights.unsqueeze(1)  # Shape: (batch_size, 1, seq_len)
+
+        cont_v = torch.bmm(attn_weights, encoder_outputs)  # Shape: (batch_size, 1, hidden_size)
+        
+        aed_state = torch.tanh(self.Wout(torch.cat((cont_v, query), dim=-1)))
+        
+        return aed_state
+        
         raise NotImplementedError("Add your implementation.")
 
     def sequence_mask(self, lengths):
@@ -93,14 +111,14 @@ class Encoder(nn.Module):
 
         # Pack the padded sequence
         packed_embedded = pack(
-            embedded, lengths.cpu(), batch_first=True, enforce_sorted=False
+            embedded, lengths, batch_first=True, enforce_sorted=False
         )
 
         # Pass through the LSTM
         packed_outputs, (hidden, cell) = self.lstm(packed_embedded)
 
         # Unpack the packed sequence
-        outputs, _ = unpack(packed_outputs, batch_first=True)
+        (outputs, _) = unpack(packed_outputs, batch_first=True)
         
         
         # outputs: (batch_size, max_src_len, hidden_size * 2) for bidirectional LSTM
@@ -142,9 +160,6 @@ class Decoder(nn.Module):
         )
 
         self.attn = attn
-        
-        # Output layer to predict next token
-        self.output_layer = nn.Linear(self.hidden_size, self.tgt_vocab_size)
 
     def forward(
         self,
@@ -181,41 +196,38 @@ class Decoder(nn.Module):
         #############################################
         
                     
-        batch_size = tgt.size(0)
-        max_tgt_len = tgt.size(1)
-
+        embedded = self.dropout(self.embedding(tgt))
+        
         # Prepare a tensor to hold the decoder outputs
         decoder_outputs = []
 
         # Initial state for decoder is from the encoder output
-        hidden, cell = dec_state
+        (hidden, cell) = dec_state
 
-        # Iterate through each time step in the target sequence
-        for t in range(max_tgt_len):
-            # Get the embedding for the current target token
-            input_token = tgt[:, t].unsqueeze(1)  # (batch_size, 1)
-            embedded = self.embedding(input_token)  # (batch_size, 1, hidden_size)
-            
-            # Apply dropout on the embedding layer output
-            embedded = self.dropout(embedded)
-            
-            # Pass the embedded input and previous hidden state to the LSTM
-            lstm_out, (hidden, cell) = self.lstm(embedded, (hidden, cell))
+        max_tgt_len = tgt.shape[1]-1
+        
+        if (max_tgt_len > 1):
+            # Iterate through each time step in the target sequence
+            for t in range(max_tgt_len):
+                
+                iter_embed = embedded[:, t].unsqueeze(1)
+                
+                lstm_out, (hidden, cell) = self.lstm(iter_embed, (hidden, cell))
 
-            # Apply attention mechanism (if provided)
+                if self.attn is not None:
+                    lstm_out = self.attn(lstm_out, encoder_outputs, src_lengths)
+
+                lstm_out = self.dropout(lstm_out)
+                decoder_outputs.append(lstm_out)
+
+            decoder_outputs = torch.cat(decoder_outputs, dim=1)
+        else:
+            decoder_outputs, (hidden, cell) = self.lstm(embedded, (hidden, cell))
             if self.attn is not None:
-                attention_output = self.attn(lstm_out, encoder_outputs, src_lengths)
-                lstm_out = lstm_out + attention_output  # Combine attention output with LSTM output
-
-            # Apply dropout to the LSTM output (dropout is applied at the final output in the hint)
-            lstm_out = self.dropout(lstm_out)
-
-            # Use the LSTM output to predict the next token
-            output_token = self.output_layer(lstm_out.squeeze(1))  # (batch_size, tgt_vocab_size)
-            decoder_outputs.append(output_token)
-
-        # Stack the outputs for all time steps to get the final sequence output
-        decoder_outputs = torch.stack(decoder_outputs, dim=1)  # (batch_size, max_tgt_len, tgt_vocab_size)
+                decoder_outputs = self.attn(decoder_outputs, encoder_outputs, src_lengths)
+            
+            decoder_outputs = self.dropout(decoder_outputs)
+              
 
         return decoder_outputs, (hidden, cell)  
 
