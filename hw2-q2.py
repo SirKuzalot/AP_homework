@@ -20,7 +20,7 @@ class ConvBlock(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding, bias=True)
         self.activation = nn.ReLU()
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2) if maxpool else nn.Identity()
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout2d(dropout)
         self.batch_norm = nn.BatchNorm2d(out_channels) if batch_norm else nn.Identity()
 
     def forward(self, x):
@@ -58,7 +58,7 @@ class CNN(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x):
-        x = x.reshape(x.shape[0], 3, 48, 48)
+        x = x.reshape(x.shape[0], 3, 48, -1)
         x = self.conv_blocks(x)
         
         # Apply global average pooling
