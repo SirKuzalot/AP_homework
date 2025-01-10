@@ -120,6 +120,8 @@ class Encoder(nn.Module):
         # Unpack the packed sequence
         (outputs, _) = unpack(packed_outputs, batch_first=True)
         
+        outputs = self.dropout(outputs)
+        
         
         # outputs: (batch_size, max_src_len, hidden_size * 2) for bidirectional LSTM
         return outputs, (hidden, cell)
